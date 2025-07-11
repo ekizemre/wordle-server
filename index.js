@@ -17,14 +17,14 @@ const kelimeler = {
   RENKLER: ["mavi", "sarı", "beyaz", "siyah", "yeşil"],
 };
 
-const rooms = {}; // odaKodu -> { players: [], kelime, turnIndex, kategori }
-const waitingPlayers = {}; // kategori -> [ { id, nickname } ]
-const rematchRequests = {}; // socket.id -> odaKodu
+const rooms = {}; 
+const waitingPlayers = {}; 
+const rematchRequests = {}; 
 
 io.on("connection", (socket) => {
   console.log("🔌 Yeni bağlantı:", socket.id);
 
-  // ✅ GÜNCELLENMİŞ join_game EVENTİ
+  
   socket.on("join_game", ({ kategori, nickname }) => {
     if (!kategori || !nickname) return;
 
