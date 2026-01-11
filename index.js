@@ -12,9 +12,28 @@ const io = new Server(server, {
 });
 
 const kelimeler = {
-  HAYVANLAR: ["kedi", "köpek", "aslan", "balık", "fares"],
-  YIYECEKLER: ["elma", "erik", "armut", "muz", "üzüm"],
-  RENKLER: ["mavi", "sarı", "beyaz", "siyah", "yeşil"],
+  HAYVANLAR: [
+    "aslan",
+    "köpek",
+    "tilki",
+    "zebra",
+    "geyik"
+  ],
+
+  YIYECEKLER: [
+    "armut",
+    "biber",
+    "ekmek",
+    "limon",
+    "helva"
+  ],
+
+  RENKLER: [
+    "beyaz",
+    "siyah",
+    "yeşil",
+    "morun",
+  ]
 };
 
 const WORD_LEN = 5;
