@@ -77,7 +77,6 @@ function processGuess({ socketId, tahmin, odaKodu }) {
   if (current.id !== socketId) return;
 
   const renkler = getRenkler(tahmin, room.kelime);
-
   io.to(roomKey).emit("opponent_guess", tahmin, renkler);
 
   if (tahmin === room.kelime) {
@@ -160,9 +159,47 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("play_vs_bot", ({ kategori, nickname }) => {
-    console.log("PLAY_VS_BOT:", { kategori, nickname, id: socket.id });
+  socket.on("join_game_with_code", ({ odaKodu, kategori, nickname }) => {
+    if (!odaKodu || !kategori || !nickname) return;
 
+    const upperKategori = kategori.toUpperCase();
+    if (!kelimeler[upperKategori]) return;
+
+    if (!rooms[odaKodu]) {
+      rooms[odaKodu] = {
+        kategori: upperKategori,
+        kelime: kelimeler[upperKategori][Math.floor(Math.random() * kelimeler[upperKategori].length)],
+        turnIndex: 0,
+        players: [{ id: socket.id, nickname }],
+      };
+      socket.join(odaKodu);
+      return;
+    }
+
+    if (rooms[odaKodu].players.length >= 2) {
+      socket.emit("error", "Oda dolu.");
+      return;
+    }
+
+    if (rooms[odaKodu].players.some((p) => p.id === socket.id)) return;
+
+    rooms[odaKodu].players.push({ id: socket.id, nickname });
+    socket.join(odaKodu);
+
+    const [p1, p2] = rooms[odaKodu].players;
+    const kelime = rooms[odaKodu].kelime;
+
+    io.to(p1.id).emit("match_found", kelime);
+    io.to(p2.id).emit("match_found", kelime);
+
+    io.to(p1.id).emit("your_turn", true);
+    io.to(p2.id).emit("your_turn", false);
+
+    io.to(p1.id).emit("nickname_info", { sen: p1.nickname, rakip: p2.nickname });
+    io.to(p2.id).emit("nickname_info", { sen: p2.nickname, rakip: p1.nickname });
+  });
+
+  socket.on("play_vs_bot", ({ kategori, nickname }) => {
     if (!kategori || !nickname) return;
 
     const upperKategori = kategori.toUpperCase();
@@ -211,10 +248,7 @@ io.on("connection", (socket) => {
 
       socket.emit("match_found", room.kelime);
       socket.emit("your_turn", true);
-      socket.emit("nickname_info", {
-        sen: room.players[0].nickname,
-        rakip: "BOT",
-      });
+      socket.emit("nickname_info", { sen: room.players[0].nickname, rakip: "BOT" });
       return;
     }
 
