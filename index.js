@@ -17,6 +17,29 @@ const kelimeler = {
   RENKLER: ["mavi", "sarı", "beyaz", "siyah", "yeşil"],
 };
 
+const WORD_LEN = 5;
+
+function normalize(w) {
+  return (w || "").toString().trim().toLowerCase();
+}
+
+function isValidWord(w) {
+  return normalize(w).length === WORD_LEN;
+}
+
+const kelimeler5 = Object.fromEntries(
+  Object.entries(kelimeler).map(([kat, arr]) => [
+    kat,
+    (arr || []).map(normalize).filter(isValidWord),
+  ])
+);
+
+function pickRandomWord(kategoriKey) {
+  const list = kelimeler5[kategoriKey] || [];
+  if (list.length === 0) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
 const rooms = {};
 const waitingPlayers = {};
 const rematchRequests = {};
@@ -30,23 +53,31 @@ function isBotPlayer(p) {
 }
 
 function pickBotGuess(room) {
-  const list = kelimeler[room.kategori];
+  const list = kelimeler5[room.kategori] || [];
+  if (list.length === 0) return "-----";
   return list[Math.floor(Math.random() * list.length)];
 }
 
 function getRenkler(kelime, dogruKelime) {
-  const renkler = Array(5).fill("absent");
-  const dogru = dogruKelime.split("");
-  const tahmin = kelime.split("");
+  const guess = normalize(kelime);
+  const target = normalize(dogruKelime);
 
-  for (let i = 0; i < 5; i++) {
+  if (guess.length !== WORD_LEN || target.length !== WORD_LEN) {
+    return Array(WORD_LEN).fill("absent");
+  }
+
+  const renkler = Array(WORD_LEN).fill("absent");
+  const dogru = target.split("");
+  const tahmin = guess.split("");
+
+  for (let i = 0; i < WORD_LEN; i++) {
     if (tahmin[i] === dogru[i]) {
       renkler[i] = "correct";
       dogru[i] = null;
     }
   }
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < WORD_LEN; i++) {
     if (renkler[i] === "correct") continue;
     const index = dogru.indexOf(tahmin[i]);
     if (index !== -1) {
@@ -65,6 +96,9 @@ function findRoomByPlayerId(id) {
 }
 
 function processGuess({ socketId, tahmin, odaKodu }) {
+  const t = normalize(tahmin);
+  if (t.length !== WORD_LEN) return;
+
   const roomKey = odaKodu || findRoomByPlayerId(socketId);
   if (!roomKey) return;
 
@@ -76,10 +110,10 @@ function processGuess({ socketId, tahmin, odaKodu }) {
 
   if (current.id !== socketId) return;
 
-  const renkler = getRenkler(tahmin, room.kelime);
-  io.to(roomKey).emit("opponent_guess", tahmin, renkler);
+  const renkler = getRenkler(t, room.kelime);
+  io.to(roomKey).emit("opponent_guess", t, renkler);
 
-  if (tahmin === room.kelime) {
+  if (t === room.kelime) {
     if (isBotPlayer(current)) {
       if (!isBotPlayer(other)) io.to(other.id).emit("game_result", "Kaybettiniz 😢");
     } else {
@@ -114,7 +148,7 @@ io.on("connection", (socket) => {
     if (!kategori || !nickname) return;
 
     const upperKategori = kategori.toUpperCase();
-    if (!kelimeler[upperKategori]) return;
+    if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
 
     if (!waitingPlayers[upperKategori]) waitingPlayers[upperKategori] = [];
     const queue = waitingPlayers[upperKategori];
@@ -126,10 +160,8 @@ io.on("connection", (socket) => {
       if (rakip.id === socket.id) return;
 
       const odaKodu = Math.random().toString(36).substring(2, 7);
-      const kelime =
-        kelimeler[upperKategori][
-          Math.floor(Math.random() * kelimeler[upperKategori].length)
-        ];
+      const kelime = pickRandomWord(upperKategori);
+      if (!kelime) return;
 
       rooms[odaKodu] = {
         kategori: upperKategori,
@@ -163,12 +195,15 @@ io.on("connection", (socket) => {
     if (!odaKodu || !kategori || !nickname) return;
 
     const upperKategori = kategori.toUpperCase();
-    if (!kelimeler[upperKategori]) return;
+    if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
 
     if (!rooms[odaKodu]) {
+      const kelime = pickRandomWord(upperKategori);
+      if (!kelime) return;
+
       rooms[odaKodu] = {
         kategori: upperKategori,
-        kelime: kelimeler[upperKategori][Math.floor(Math.random() * kelimeler[upperKategori].length)],
+        kelime,
         turnIndex: 0,
         players: [{ id: socket.id, nickname }],
       };
@@ -203,13 +238,12 @@ io.on("connection", (socket) => {
     if (!kategori || !nickname) return;
 
     const upperKategori = kategori.toUpperCase();
-    if (!kelimeler[upperKategori]) return;
+    if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
 
     const odaKodu = Math.random().toString(36).substring(2, 7);
-    const kelime =
-      kelimeler[upperKategori][
-        Math.floor(Math.random() * kelimeler[upperKategori].length)
-      ];
+    const kelime = pickRandomWord(upperKategori);
+    if (!kelime) return;
+
     const bot = makeBotPlayer();
 
     rooms[odaKodu] = {
@@ -227,7 +261,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("guess", ({ tahmin, odaKodu }) => {
-    processGuess({ socketId: socket.id, tahmin, odaKodu });
+    const t = normalize(tahmin);
+    if (t.length !== WORD_LEN) return;
+    processGuess({ socketId: socket.id, tahmin: t, odaKodu });
   });
 
   socket.on("rematch_request", () => {
@@ -240,10 +276,10 @@ io.on("connection", (socket) => {
     const rakip = room.players.find((p) => p.id !== socket.id);
 
     if (rakip && isBotPlayer(rakip)) {
-      room.kelime =
-        kelimeler[room.kategori][
-          Math.floor(Math.random() * kelimeler[room.kategori].length)
-        ];
+      const yeni = pickRandomWord(room.kategori);
+      if (!yeni) return;
+
+      room.kelime = yeni;
       room.turnIndex = 0;
 
       socket.emit("match_found", room.kelime);
@@ -267,10 +303,10 @@ io.on("connection", (socket) => {
     if (rakip) io.to(rakip.id).emit("rematch_response", cevap);
 
     if (cevap === "yes") {
-      room.kelime =
-        kelimeler[room.kategori][
-          Math.floor(Math.random() * kelimeler[room.kategori].length)
-        ];
+      const yeni = pickRandomWord(room.kategori);
+      if (!yeni) return;
+
+      room.kelime = yeni;
       room.turnIndex = 0;
 
       const [p1, p2] = room.players;
