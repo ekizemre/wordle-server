@@ -12,28 +12,9 @@ const io = new Server(server, {
 });
 
 const kelimeler = {
-  HAYVANLAR: [
-    "aslan",
-    "köpek",
-    "tilki",
-    "zebra",
-    "geyik"
-  ],
-
-  YIYECEKLER: [
-    "armut",
-    "biber",
-    "ekmek",
-    "limon",
-    "helva"
-  ],
-
-  RENKLER: [
-    "beyaz",
-    "siyah",
-    "yeşil",
-    "morun",
-  ]
+  HAYVANLAR: ["aslan", "köpek", "tilki", "zebra", "geyik"],
+  YIYECEKLER: ["armut", "biber", "ekmek", "limon", "helva"],
+  RENKLER: ["beyaz", "siyah", "yeşil", "morun"],
 };
 
 const WORD_LEN = 5;
@@ -62,6 +43,7 @@ function pickRandomWord(kategoriKey) {
 const rooms = {};
 const waitingPlayers = {};
 const rematchRequests = {};
+const playerRoom = {};
 
 function makeBotPlayer() {
   return { id: `bot_${Date.now()}`, nickname: "BOT", isBot: true };
@@ -69,6 +51,31 @@ function makeBotPlayer() {
 
 function isBotPlayer(p) {
   return p && p.isBot === true;
+}
+
+function removeFromQueues(socketId) {
+  for (const kategori in waitingPlayers) {
+    waitingPlayers[kategori] = waitingPlayers[kategori].filter((p) => p.id !== socketId);
+  }
+}
+
+function cleanupPlayer(socketId) {
+  removeFromQueues(socketId);
+
+  const oldRoomKey = playerRoom[socketId];
+  if (!oldRoomKey) return;
+
+  const room = rooms[oldRoomKey];
+  if (room) {
+    const other = room.players.find((p) => p.id !== socketId);
+    if (other && !isBotPlayer(other)) {
+      io.to(other.id).emit("opponent_left");
+      delete playerRoom[other.id];
+    }
+    delete rooms[oldRoomKey];
+  }
+
+  delete playerRoom[socketId];
 }
 
 function pickBotGuess(room) {
@@ -109,9 +116,7 @@ function getRenkler(kelime, dogruKelime) {
 }
 
 function findRoomByPlayerId(id) {
-  return Object.entries(rooms).find(([_, room]) =>
-    room.players.some((p) => p.id === id)
-  )?.[0];
+  return playerRoom[id] || null;
 }
 
 function processGuess({ socketId, tahmin, odaKodu }) {
@@ -166,6 +171,8 @@ io.on("connection", (socket) => {
   socket.on("join_game", ({ kategori, nickname }) => {
     if (!kategori || !nickname) return;
 
+    cleanupPlayer(socket.id);
+
     const upperKategori = kategori.toUpperCase();
     if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
 
@@ -177,6 +184,8 @@ io.on("connection", (socket) => {
     if (queue.length > 0) {
       const rakip = queue.shift();
       if (rakip.id === socket.id) return;
+
+      cleanupPlayer(rakip.id);
 
       const odaKodu = Math.random().toString(36).substring(2, 7);
       const kelime = pickRandomWord(upperKategori);
@@ -191,6 +200,9 @@ io.on("connection", (socket) => {
           { id: socket.id, nickname },
         ],
       };
+
+      playerRoom[rakip.id] = odaKodu;
+      playerRoom[socket.id] = odaKodu;
 
       socket.join(odaKodu);
       io.sockets.sockets.get(rakip.id)?.join(odaKodu);
@@ -213,6 +225,8 @@ io.on("connection", (socket) => {
   socket.on("join_game_with_code", ({ odaKodu, kategori, nickname }) => {
     if (!odaKodu || !kategori || !nickname) return;
 
+    cleanupPlayer(socket.id);
+
     const upperKategori = kategori.toUpperCase();
     if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
 
@@ -226,6 +240,8 @@ io.on("connection", (socket) => {
         turnIndex: 0,
         players: [{ id: socket.id, nickname }],
       };
+
+      playerRoom[socket.id] = odaKodu;
       socket.join(odaKodu);
       return;
     }
@@ -238,9 +254,14 @@ io.on("connection", (socket) => {
     if (rooms[odaKodu].players.some((p) => p.id === socket.id)) return;
 
     rooms[odaKodu].players.push({ id: socket.id, nickname });
-    socket.join(odaKodu);
+    playerRoom[socket.id] = odaKodu;
 
     const [p1, p2] = rooms[odaKodu].players;
+    playerRoom[p1.id] = odaKodu;
+
+    socket.join(odaKodu);
+    io.sockets.sockets.get(p1.id)?.join(odaKodu);
+
     const kelime = rooms[odaKodu].kelime;
 
     io.to(p1.id).emit("match_found", kelime);
@@ -255,6 +276,8 @@ io.on("connection", (socket) => {
 
   socket.on("play_vs_bot", ({ kategori, nickname }) => {
     if (!kategori || !nickname) return;
+
+    cleanupPlayer(socket.id);
 
     const upperKategori = kategori.toUpperCase();
     if (!kelimeler5[upperKategori] || kelimeler5[upperKategori].length === 0) return;
@@ -272,6 +295,8 @@ io.on("connection", (socket) => {
       players: [{ id: socket.id, nickname, isBot: false }, bot],
     };
 
+    playerRoom[socket.id] = odaKodu;
+
     socket.join(odaKodu);
 
     socket.emit("match_found", kelime);
@@ -282,6 +307,7 @@ io.on("connection", (socket) => {
   socket.on("guess", ({ tahmin, odaKodu }) => {
     const t = normalize(tahmin);
     if (t.length !== WORD_LEN) return;
+
     processGuess({ socketId: socket.id, tahmin: t, odaKodu });
   });
 
@@ -308,7 +334,7 @@ io.on("connection", (socket) => {
     }
 
     rematchRequests[socket.id] = odaKodu;
-    if (rakip) io.to(rakip.id).emit("rematch_request");
+    if (rakip && !isBotPlayer(rakip)) io.to(rakip.id).emit("rematch_request");
   });
 
   socket.on("rematch_response", (cevap) => {
@@ -319,7 +345,7 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     const rakip = room.players.find((p) => p.id !== socket.id);
-    if (rakip) io.to(rakip.id).emit("rematch_response", cevap);
+    if (rakip && !isBotPlayer(rakip)) io.to(rakip.id).emit("rematch_response", cevap);
 
     if (cevap === "yes") {
       const yeni = pickRandomWord(room.kategori);
@@ -344,17 +370,20 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    for (const kategori in waitingPlayers) {
-      waitingPlayers[kategori] = waitingPlayers[kategori].filter(
-        (p) => p.id !== socket.id
-      );
-    }
+    removeFromQueues(socket.id);
 
     const odaKodu = findRoomByPlayerId(socket.id);
+    delete playerRoom[socket.id];
+
     if (odaKodu) {
       const room = rooms[odaKodu];
-      const kalan = room.players.find((p) => p.id !== socket.id);
-      if (kalan && !isBotPlayer(kalan)) io.to(kalan.id).emit("opponent_left");
+      if (room) {
+        const kalan = room.players.find((p) => p.id !== socket.id);
+        if (kalan && !isBotPlayer(kalan)) {
+          io.to(kalan.id).emit("opponent_left");
+          delete playerRoom[kalan.id];
+        }
+      }
       delete rooms[odaKodu];
     }
   });
